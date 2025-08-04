@@ -49,11 +49,12 @@
         #define SATURATION_BASE 0.96
         #define VALUE_SPEED 0.5
         #define VALUE_BASE 0.5
-        #define BLUR_RADIUS 20.0
+        #define BLUR_RADIUS 25.0
         #define MELT_ROT_SPEED 0.3
-        #define DECAY_SPEED 0.995
-        #define MAX_MELT_UP vec2(-0.5, -0.9)
-        #define MAX_MELT_LEFT vec2(0.9, 0.5)
+        #define DECAY_SPEED 0.999
+        #define DECAY_FIXED 0.002
+        #define MAX_MELT_UP vec2(-0.5, -5.9)
+        #define MAX_MELT_LEFT vec2(5.9, 0.5)
 
         vec3 hsv2rgb(vec3 c) {
             vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
@@ -113,7 +114,7 @@
             
             blurred_color /= float(NUM_SAMPLES);
 
-            vec4 prevFrameColor = blurred_color * DECAY_SPEED;
+            vec4 prevFrameColor = blurred_color * DECAY_SPEED - DECAY_FIXED;
 
             vec2 uv = (gl_FragCoord.xy * 2.0 - u_resolution.xy) / u_resolution.y;
             
