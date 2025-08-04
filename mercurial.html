@@ -40,10 +40,11 @@
         #define ROT_X_SPEED 0.2
         #define HUE_SPEED 0.04
         #define SATURATION_SPEED 0.3
-        #define SATURATION_BASE 0.96
+        #define SATURATION_BASE 0.98
         #define VALUE_SPEED 0.5
-        #define VALUE_BASE 0.5
-        #define BLUR_RADIUS 25.0
+        #define VALUE_BASE 0.6
+        #define GRADIENT_LENGTH 10.0
+        #define BLUR_RADIUS 40.0
         #define MELT_ROT_SPEED 0.3
         #define DECAY_SPEED 0.999
         #define DECAY_FIXED 0.002
@@ -132,7 +133,7 @@
             if (shapeMask > 0.0) {
                 mat3 rotation = rotateY(u_time * ROT_Y_SPEED) * rotateX(u_time * ROT_X_SPEED);
                 vec3 localPos = hitPos * rotation;
-                float time_offset = dot(localPos, normalize(vec3(1.0, 1.0, 1.0))) * 15.0;
+                float time_offset = dot(localPos, normalize(vec3(1.0, 1.0, 1.0))) * GRADIENT_LENGTH;
                 time_for_hue += time_offset;
             }
             hue = fract(time_for_hue * HUE_SPEED);
