@@ -3,13 +3,17 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mercurial</title>
+    <title>Mercurial Fluidity</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap" rel="stylesheet">
     <style>
         html, body {
             margin: 0;
             padding: 0;
             overflow: hidden;
             background-color: #000;
+            font-family: 'Inter', sans-serif;
         }
         canvas {
             display: block;
@@ -28,89 +32,120 @@
             v_texCoord = a_position * 0.5 + 0.5;
         }
     </script>
+    <h1 style="color:white; position:absolute; top:-110px; left:0; padding: 0px 80px; font-size: 120px; mix-blend-mode: difference; font-family: sans;">
+		CURVEDINF
+	</h1>
     <script id="fragment-shader" type="x-shader/x-fragment">
         precision highp float;
         uniform vec2 u_resolution;
         uniform float u_time;
-        uniform sampler2D u_prevFrame; 
+        uniform sampler2D u_prevFrame;
         varying vec2 v_texCoord;
+
+        // --- Shape & Color Constants ---
         #define PI 3.14159265359
-        #define NUM_SAMPLES 32
-        #define SHAPE_RADIUS 0.55
+        #define SHAPE_RADIUS 0.45
         #define ROT_Y_SPEED 0.1
-        #define ROT_X_SPEED -0.2
+        #define ROT_X_SPEED -0.1
         #define HUE_SPEED 0.04
-        #define SATURATION_SPEED 0.29
-        #define SATURATION_BASE 0.9
-        #define VALUE_SPEED 0.23
-        #define VALUE_BASE 0.5
+        #define SATURATION_SPEED 0.3
+        #define SATURATION_BASE 0.7
+        #define VALUE_SPEED 0.5
+        #define VALUE_BASE 0.6
         #define GRADIENT_LENGTH 20.0
-        #define BLUR_RADIUS 20.0
-        #define MELT_ROT_SPEED 0.3
-        #define DECAY_SPEED 0.9999
-        #define DECAY_FIXED 0.002
-        #define MAX_MELT_UP vec2(-14.5, -22.9)
-        #define MAX_MELT_LEFT vec2(22.9, 14.5)
+
+        // --- Fluid & Decay Constants ---
+        #define DECAY_SPEED 1.001 // How fast trails fade (higher is slower)
+        #define DECAY_FIXED 0.003  // A fixed amount of fade per frame
+        #define STIR_SPEED 0.2    // How fast the "stirring" point moves
+        #define STIR_FALLOFF 4.0   // How quickly the stirring influence drops with distance
+        #define STIR_STRENGTH 0.08  // The maximum pull strength of the stir
+
+        // Converts a color from HSV to RGB color space.
         vec3 hsv2rgb(vec3 c) {
             vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
             vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
             return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
         }
+
+        // Rotation matrix for Y-axis.
         mat3 rotateY(float angle) {
             float s = sin(angle);
             float c = cos(angle);
             return mat3(c, 0.0, -s, 0.0, 1.0, 0.0, s, 0.0, c);
         }
+
+        // Rotation matrix for X-axis.
         mat3 rotateX(float angle) {
             float s = sin(angle);
             float c = cos(angle);
             return mat3(1.0, 0.0, 0.0, 0.0, c, s, 0.0, -s, c);
         }
+
+        // Signed Distance Function for a dodecahedron.
+        // Returns distance to the surface and distance to the nearest edge.
         vec2 map(vec3 p) {
             mat3 rotation = rotateY(u_time * ROT_Y_SPEED) * rotateX(u_time * ROT_X_SPEED);
             p *= rotation;
-            const float phi = 1.61803398875;
+
+            const float phi = 1.61803398875; // Golden ratio
             vec3 n = normalize(vec3(0.0, 1.0, phi));
             
-            vec3 q = abs(p); 
+            vec3 q = abs(p);
             float d1 = dot(q, n);
             float d2 = dot(q, n.zxy);
             float d3 = dot(q, n.yzx);
             
-            float dist = max(max(d1, d2), d3) - SHAPE_RADIUS; 
-            float a = max(d1, max(d2, d3)); 
-            float b = min(d1, min(d2, d3)); 
-            float c = (d1 + d2 + d3) - a - b; 
-            float edge = a - c; 
+            float dist = max(max(d1, d2), d3) - SHAPE_RADIUS;
+            
+            float a = max(d1, max(d2, d3));
+            float b = min(d1, min(d2, d3));
+            float c = (d1 + d2 + d3) - a - b;
+            float edge = a - c;
+            
             return vec2(dist, edge);
         }
+
         void main() {
-            float sin_wave = (sin(u_time * MELT_ROT_SPEED) + 1.0) * 0.5;
-            vec2 melt_direction = normalize(mix(MAX_MELT_UP, MAX_MELT_LEFT, sin_wave));
-            
-            vec2 melt_coord_offset = melt_direction / u_resolution;
-            vec2 melt_center_coord = v_texCoord + melt_coord_offset;
-            
-            vec4 blurred_color = vec4(0.0);
-            
-            for (int i = 0; i < NUM_SAMPLES; i++) {
-                float angle = float(i) / float(NUM_SAMPLES) * 2.0 * PI;
-                vec2 sample_offset = vec2(cos(angle), sin(angle)) * BLUR_RADIUS / u_resolution;
-                blurred_color += texture2D(u_prevFrame, melt_center_coord + sample_offset);
-            }
-            
-            blurred_color /= float(NUM_SAMPLES);
-            vec4 prevFrameColor = blurred_color * DECAY_SPEED - DECAY_FIXED;
+            // --- Fluid Dynamics Simulation ---
+            // 1. A "stirring point" moves from bottom-left to top-right, then repeats.
+            float stir_progress = fract(u_time * STIR_SPEED);
+            float stir_progress_times_two = fract(u_time * STIR_SPEED / 2.0);
+			vec2 stir_point = vec2(stir_progress, stir_progress);
+            if (stir_progress_times_two > 0.5) {
+				stir_point = vec2(1.0) - stir_point;
+			}
+			stir_point = stir_point * 0.8 + 0.1;
+
+            // 2. Calculate the distance from the current fragment to the stirring point.
+            float dist_to_stir = distance(v_texCoord, stir_point);
+
+            // 3. Calculate the influence of the stir, using an exponential falloff.
+            // The closer to the point, the stronger the influence.
+            float influence = exp(-dist_to_stir * STIR_FALLOFF) * STIR_STRENGTH;
+
+            // 4. The new sampling coordinate is pulled from its original position (v_texCoord)
+            // towards the stir point, based on the calculated influence.
+            vec2 fluid_coord = mix(v_texCoord, stir_point, influence);
+
+            // 5. Sample the previous frame using the fluid-displaced coordinate and apply decay.
+            vec4 prevFrameColor = texture2D(u_prevFrame, fluid_coord);
+            prevFrameColor = prevFrameColor * DECAY_SPEED - DECAY_FIXED;
+
+
+            // --- Raymarching and Shape Rendering ---
             vec2 uv = (gl_FragCoord.xy * 2.0 - u_resolution.xy) / u_resolution.y;
+            if (u_resolution.x < u_resolution.y) {
+				uv = (gl_FragCoord.xy * 2.0 - u_resolution.xy) / u_resolution.x;
+			}
+            vec3 ro = vec3(0.0, 0.0, 2.0); // Ray origin
+            vec3 rd = normalize(vec3(uv, -6.0)); // Ray direction
             
-            vec3 ro = vec3(0.0, 0.0, 2.0); 
-            vec3 rd = normalize(vec3(uv, -6.0)); 
             float t = 0.0;
             float shapeMask = 0.0;
             const int MAX_STEPS = 64;
             const float MAX_DIST = 100.0;
             const float HIT_DIST = 0.001;
-
             vec3 hitPos = vec3(0.0);
 
             for (int i = 0; i < MAX_STEPS; i++) {
@@ -119,7 +154,7 @@
                 float dist = res.x;
                 float edge = res.y;
                 if (dist < HIT_DIST) {
-                    shapeMask = 1.0 - smoothstep(0.0, 0.025, edge);
+                    shapeMask = 1.0 - smoothstep(0.0, 0.025, edge); // Soften edges
                     hitPos = pos;
                     break;
                 }
@@ -129,6 +164,7 @@
                 }
             }
 
+            // --- Coloring ---
             float hue;
             float time_for_hue = u_time;
             if (shapeMask > 0.0) {
@@ -137,76 +173,137 @@
                 float time_offset = dot(localPos, normalize(vec3(1.0, 1.0, 1.0))) * GRADIENT_LENGTH;
                 time_for_hue += time_offset;
             }
+            float time_for_sat = time_for_hue * 0.71;
+            float time_for_val = time_for_hue * 0.63;
             hue = fract(time_for_hue * HUE_SPEED);
 
-            float saturation = cos(time_for_hue * SATURATION_SPEED) * (1.0 - SATURATION_BASE) + SATURATION_BASE;
-            float value = sin(time_for_hue * VALUE_SPEED) * (1.0 - VALUE_BASE) + VALUE_BASE;
+            float saturation = cos(time_for_sat * SATURATION_SPEED) * (1.0 - SATURATION_BASE) + SATURATION_BASE;
+            float value = sin(time_for_val * VALUE_SPEED) * (1.0 - VALUE_BASE) + VALUE_BASE;
             vec3 shapeColor = hsv2rgb(vec3(hue, saturation, value));
             vec4 newColor = vec4(shapeColor, 1.0) * shapeMask;
-            gl_FragColor = ((prevFrameColor + newColor) + (1.0 - (1.0 - prevFrameColor) * (1.0 - newColor)) * 2.0) / 3.0;
+
+            // --- Final Blending ---
+            // Combine the newly rendered shape with the fluid-displaced previous frame.
+            gl_FragColor = max(newColor, prevFrameColor);
         }
     </script>
     <script>
         'use strict';
+        
+        // Main function to initialize WebGL and start the render loop.
         function main() {
             const canvas = document.getElementById('gl-canvas');
             const gl = canvas.getContext('webgl');
+            
+            // Check for WebGL support and show a message if it's not available.
             if (!gl) {
-                alert('WebGL is not supported by your browser.');
+                const errorBox = document.createElement('div');
+                errorBox.style.position = 'absolute';
+                errorBox.style.top = '50%';
+                errorBox.style.left = '50%';
+                errorBox.style.transform = 'translate(-50%, -50%)';
+                errorBox.style.padding = '24px';
+                errorBox.style.backgroundColor = 'rgba(25, 25, 25, 0.9)';
+                errorBox.style.color = '#fff';
+                errorBox.style.border = '1px solid #444';
+                errorBox.style.borderRadius = '12px';
+                errorBox.style.textAlign = 'center';
+                errorBox.style.lineHeight = '1.6';
+                errorBox.innerHTML = '<strong>WebGL Not Supported</strong><br>Please use a modern browser like Chrome, Firefox, or Safari.';
+                document.body.appendChild(errorBox);
                 return;
             }
+
+            // Get shader source code and create the WebGL program.
             const vsSource = document.getElementById('vertex-shader').textContent;
             const fsSource = document.getElementById('fragment-shader').textContent;
             const program = createProgram(gl, vsSource, fsSource);
+
+            // Get locations of attributes and uniforms.
             const positionAttributeLocation = gl.getAttribLocation(program, 'a_position');
             const resolutionUniformLocation = gl.getUniformLocation(program, 'u_resolution');
             const timeUniformLocation = gl.getUniformLocation(program, 'u_time');
             const prevFrameUniformLocation = gl.getUniformLocation(program, 'u_prevFrame');
+
+            // Create a buffer for a full-screen triangle.
             const positionBuffer = gl.createBuffer();
             gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
-            const positions = [-1, -1, 3, -1, -1, 3]; 
+            // This triangle is larger than the screen, ensuring the fragment shader runs for every pixel.
+            const positions = [-1, -1, 3, -1, -1, 3];
             gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(positions), gl.STATIC_DRAW);
+
+            // Create two framebuffers to ping-pong between for the feedback effect.
             let fbo1 = createFramebuffer(gl, gl.canvas.width, gl.canvas.height);
             let fbo2 = createFramebuffer(gl, gl.canvas.width, gl.canvas.height);
             let readFBO = fbo1;
             let writeFBO = fbo2;
+
             let then = 0;
             function render(now) {
-                now *= 0.001; 
-                const deltaTime = now - then;
-                then = now;
-                resizeCanvasToDisplaySize(gl.canvas);
-                const width = gl.canvas.width;
-                const height = gl.canvas.height;
-                if (width !== readFBO.width || height !== readFBO.height) {
+                now *= 0.001; // Convert time to seconds
+                
+                // Resize canvas and framebuffers if the window size has changed.
+                if (resizeCanvasToDisplaySize(gl.canvas)) {
+                    const width = gl.canvas.width;
+                    const height = gl.canvas.height;
                     fbo1 = createFramebuffer(gl, width, height);
                     fbo2 = createFramebuffer(gl, width, height);
                     readFBO = fbo1;
                     writeFBO = fbo2;
                 }
+
                 gl.useProgram(program);
+
+                // Set up the position attribute.
                 gl.enableVertexAttribArray(positionAttributeLocation);
                 gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
                 gl.vertexAttribPointer(positionAttributeLocation, 2, gl.FLOAT, false, 0, 0);
                 
+                // Set uniforms.
                 gl.uniform2f(resolutionUniformLocation, gl.canvas.width, gl.canvas.height);
                 gl.uniform1f(timeUniformLocation, now);
                 
+                // --- Ping-Pong Rendering ---
+                // 1. Bind the "read" FBO's texture as input.
                 gl.uniform1i(prevFrameUniformLocation, 0);
                 gl.activeTexture(gl.TEXTURE0);
                 gl.bindTexture(gl.TEXTURE_2D, readFBO.texture);
+
+                // 2. Bind the "write" FBO as the render target.
                 gl.bindFramebuffer(gl.FRAMEBUFFER, writeFBO.framebuffer);
-                gl.viewport(0, 0, width, height);
-                gl.drawArrays(gl.TRIANGLES, 0, 3);
+                gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+                gl.drawArrays(gl.TRIANGLES, 0, 3); // Draw the scene to the FBO.
+
+                // 3. Unbind the FBO to render to the canvas.
                 gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+                
+                // 4. Use the texture we just wrote to as the source for the final draw.
                 gl.bindTexture(gl.TEXTURE_2D, writeFBO.texture);
                 gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
-                gl.drawArrays(gl.TRIANGLES, 0, 3);
+                gl.drawArrays(gl.TRIANGLES, 0, 3); // Draw to the screen.
+
+                // 5. Swap the read and write framebuffers for the next frame.
                 [readFBO, writeFBO] = [writeFBO, readFBO];
+                
                 requestAnimationFrame(render);
             }
             requestAnimationFrame(render);
         }
+
+        // Helper function to create and compile a shader.
+        function createShader(gl, type, source) {
+            const shader = gl.createShader(type);
+            gl.shaderSource(shader, source);
+            gl.compileShader(shader);
+            if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                console.error('An error occurred compiling the shaders: ' + gl.getShaderInfoLog(shader));
+                gl.deleteShader(shader);
+                return null;
+            }
+            return shader;
+        }
+
+        // Helper function to create a shader program.
         function createProgram(gl, vsSource, fsSource) {
             const vertexShader = createShader(gl, gl.VERTEX_SHADER, vsSource);
             const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fsSource);
@@ -220,33 +317,30 @@
             }
             return program;
         }
-        function createShader(gl, type, source) {
-            const shader = gl.createShader(type);
-            gl.shaderSource(shader, source);
-            gl.compileShader(shader);
-            if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-                console.error('An error occurred compiling the shaders: ' + gl.getShaderInfoLog(shader));
-                gl.deleteShader(shader);
-                return null;
-            }
-            return shader;
-        }
         
+        // Helper function to create a framebuffer object with an attached texture.
         function createFramebuffer(gl, width, height) {
             const framebuffer = gl.createFramebuffer();
             gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+            
             const texture = gl.createTexture();
             gl.bindTexture(gl.TEXTURE_2D, texture);
             gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+            
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+            
             gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+            
             gl.bindTexture(gl.TEXTURE_2D, null);
             gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+            
             return { framebuffer, texture, width, height };
         }
+
+        // Helper function to resize the canvas to match its display size.
         function resizeCanvasToDisplaySize(canvas) {
             const displayWidth  = canvas.clientWidth;
             const displayHeight = canvas.clientHeight;
@@ -257,6 +351,7 @@
             }
             return false;
         }
+
         window.onload = main;
     </script>
 </body>
